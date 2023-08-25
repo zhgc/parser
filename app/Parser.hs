@@ -1,3 +1,4 @@
+{-#LANGUAGE ApplicativeDo #-}
 module Parser where
 import Data.Char (isLower, isSpace)
 import GHC.Unicode (isDigit)
@@ -14,7 +15,8 @@ instance Functor Parser where
 instance Applicative Parser where
     pure :: a -> Parser a
     pure x = Parser (\s -> [(x,s)])
-
+-- 仔细一想，这个<*>已经完成的很好了，是否实际上用applicative就可以完成单子语法分析器的功能？
+-- 另，我听说有一个叫ApplicativeDo的语言扩展，可以了解一下。
     (<*>) :: Parser (a -> b) -> Parser a -> Parser b
     (<*>) p q = Parser (\s -> [(f x,ys)
                               |(f,xs) <- apply p s,
@@ -30,6 +32,22 @@ instance Monad Parser where
                              |(x,s')  <- apply p s,
                               (y,s'') <- apply (q x) s'])
 
+-- 别名
+getcP = getc
+satP  = sat 
+guardP = guard
+failP = fail'
+lowerP = lower
+manyP  = many
+optionalP = optional'
+naturalP = natural
+noneP = none
+lowersP = lowers
+-- tokenP = token
+intsP = ints
+
+
+-- 将分析器应用。
 apply :: Parser a -> String -> [(a,String)]
 apply (Parser p) s = p s
 
@@ -59,6 +77,16 @@ getc = Parser f
 -- 用更简洁的方式定义sat 
 sat :: (Char -> Bool) -> Parser Char
 sat p = do {c<-getc;guard (p c);return c}
+-- sa p = parse $ (\c -> guardP (p c) >> return c) <$> getcP
+-- sa :: (Char -> Bool) -> Parser Char
+--     where c <- getcP
+-- app 
+-- satP p = case maybeP of 
+--     Just c -> pure c
+--     Nothing -> failP
+--     where maybeP = (\c -> if p c then Just c else Nothing) <$> getc
+
+
 -- 仔细来看看sat的定义
 -- do natation实际上是>>的连锁应用，而>>实际上是>>=\_的语法糖
 -- 故而，getc失败就等同于fail
@@ -93,10 +121,19 @@ fail' = Parser (\_ -> [])
 char :: Char -> Parser ()
 char x = do {_ <- sat (==x);return ()}
 
+-- 这样写疑似没有问题，我继续探索一下
+charP :: Char -> Parser ()
+charP x = pure () <$> satP (==x)
+
 -- 定义字符串的分析器
 string :: [Char] -> Parser ()
 string [] = return ()
 string (x:xs) = do {char x;string xs;return ()}
+
+-- 这样写疑似也没有问题
+stringP :: [Char] -> Parser ()
+stringP [] = pure ()
+stringP (x:xs) = pure <$> charP x <*> stringP xs
 
 lower :: Parser Char
 lower = sat isLower
@@ -105,6 +142,10 @@ digit :: Parser Int
 digit = do {d <- sat isDigit;return (cvt d)}
     where cvt d = fromEnum d - fromEnum '0'
 -- isDigit接受一个字符，判断这个字符是不是数字，是数字返回True
+
+digitP :: Parser Int
+digitP = cvt <$> satP isDigit
+    where cvt d = fromEnum d - fromEnum '0'
 
 -- 如果p失败，就返回q
 (<|>) :: Parser a -> Parser a -> Parser a
@@ -164,6 +205,11 @@ nat :: Parser Int
 nat = do {ds <- some digit;return (foldl1 shiftl ds)}
     where shiftl m n = 10*m+n
 
+-- app
+natP :: Parser Int
+natP = foldl1 shiftl <$> some digitP
+    where shiftl m n = 10*m+n
+
 none :: Parser [a]
 none = return []
 
@@ -174,22 +220,46 @@ lowers = many lower
 space :: Parser ()
 space = many (sat isSpace) >> return ()
 
+-- applicative风格
+spaceP :: Parser ()
+spaceP = pure () <$> manyP (sat isSpace)
+
 symbol :: String -> Parser ()
 symbol xs = space >> string xs
+
+-- app
+symbolP :: [Char] -> Parser ()
+symbolP xs = pure <$> spaceP <*> stringP xs
 
 -- 在使用分析器p之前，先去除空格。
 token :: Parser a -> Parser a
 token p = space >> p
 
+-- app 
+tokenP :: (() -> b) -> Parser b
+tokenP p = p <$> spaceP 
+
 -- 至少分析一次
 some :: Parser a -> Parser [a]
 some p = do {x <- p;xs <- many p;return (x:xs)}
 
+--app
+someP :: Parser a -> Parser [a]
+someP p = (:) <$> p <*> manyP p 
+
 addition :: Parser Int
 addition = do {m <- digit;char '+' ;n <- digit;return (m+n)}
 
+-- app这里尤其搞笑，因为charP也返回了某些东西，所以+的行为要自己定义一下
+additionP :: Parser Int
+additionP = (\m _ n -> m+n) <$> digitP <*> charP '+' <*> digitP
+
 int :: Parser Int
 int = do {space;f <- minus;n <- nat;return (f n)}
+    where minus = (char '-' >> return negate) <|> return id 
+
+intP :: Parser Int
+intP = (\_ f n ->f n) <$> space <*> minus <*> natP
     where minus = (char '-' >> return negate) <|> return id 
 
 -- 分析[int] 列表
@@ -199,9 +269,17 @@ ints = bracket (manywith (symbol ",") int)
 bracket :: Parser a -> Parser a
 bracket p = do {symbol "[";x <- p;symbol "]";return x}
 
+bracketP :: Parser b -> Parser b
+bracketP p = (\_ x _ -> x) <$> symbolP "[" <*> p <*> symbolP "]"
+
 manywith :: Parser b -> Parser a -> Parser [a]
 manywith q p = optional' (somewith q p)
+
+manywithP :: Parser a1 -> Parser a -> Parser [a]
+manywithP q p = optionalP (somewithP q p)
 
 somewith :: Parser b -> Parser a -> Parser [a]
 somewith q p = do {x <- p;xs <- many (q >> p);return (x:xs)}
 
+somewithP :: Parser a1 -> Parser a2 -> Parser [a2]
+somewithP q p = (:) <$> p <*> many ((\_ b -> b) <$> q <*> p)
