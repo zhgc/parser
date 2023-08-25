@@ -146,8 +146,23 @@ Parser (\s -> [(yy,s'')
 Parser (\s -> [(xs,s)]) 注意这里的s已经被消耗过了。
 -}
 
+-- many :: Parser a -> Parser [a]
+-- many p = do {x<-p;xs<-many p;return (x:xs)} <|> none
+
+-- 根据some和optional'重新定义many。
+-- 一个问题是，很多函数在haskell里已经有了定义，这是为什么？因为教材太老了吗？
 many :: Parser a -> Parser [a]
-many p = do {x<-p;xs<-many p;return (x:xs)} <|> none
+many p = optional' (some p)
+
+optional' :: Parser [a] -> Parser [a]
+optional' p = p <|> none
+
+natural :: Parser Int
+natural = token nat 
+
+nat :: Parser Int
+nat = do {ds <- some digit;return (foldl1 shiftl ds)}
+    where shiftl m n = 10*m+n
 
 none :: Parser [a]
 none = return []
@@ -162,6 +177,7 @@ space = many (sat isSpace) >> return ()
 symbol :: String -> Parser ()
 symbol xs = space >> string xs
 
+-- 在使用分析器p之前，先去除空格。
 token :: Parser a -> Parser a
 token p = space >> p
 
@@ -171,3 +187,21 @@ some p = do {x <- p;xs <- many p;return (x:xs)}
 
 addition :: Parser Int
 addition = do {m <- digit;char '+' ;n <- digit;return (m+n)}
+
+int :: Parser Int
+int = do {space;f <- minus;n <- nat;return (f n)}
+    where minus = (char '-' >> return negate) <|> return id 
+
+-- 分析[int] 列表
+ints :: Parser [Int]
+ints = bracket (manywith (symbol ",") int)
+
+bracket :: Parser a -> Parser a
+bracket p = do {symbol "[";x <- p;symbol "]";return x}
+
+manywith :: Parser b -> Parser a -> Parser [a]
+manywith q p = optional' (somewith q p)
+
+somewith :: Parser b -> Parser a -> Parser [a]
+somewith q p = do {x <- p;xs <- many (q >> p);return (x:xs)}
+
