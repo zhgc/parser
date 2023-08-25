@@ -72,7 +72,7 @@ executable parser
     -- Directories containing source files.
     hs-source-dirs:   app
 
-    other-modules: Parser
+    other-modules: Parser,Expr
 
     -- Base language which the package is written in.
     default-language: GHC2021
