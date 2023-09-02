@@ -6,18 +6,17 @@ data Expr = Con Int | Bin Op Expr Expr
 data Op   = Plus | Minus
 
 expr :: Parser Expr
-expr = token (constant <|> paren binary)
+expr = tokenP (constant <|> paren binary)
 
 constant :: Parser Expr
-constant = do {n <- nat;return (Con n)}
+constant  = Con <$> natP
 
 binary :: Parser Expr
-binary = do {e1 <- expr;p <- op;e2 <- expr;return (Bin p e1 e2)}
+binary = Bin <$> op <*> expr <*> expr
 
 op :: Parser Op
-op = (symbol "+" >> return Plus) <|> 
-     (symbol "-" >> return Minus)
+op = (Plus <$ symbolP "+") <|> (Minus <$ symbolP "-")
 
 paren :: Parser a -> Parser a
-paren p = do {symbol "(";e <- p;symbol ")";return e}
+paren p =(\_ x _ -> x) <$> symbolP "(" <*> p <*> symbolP ")"
 
